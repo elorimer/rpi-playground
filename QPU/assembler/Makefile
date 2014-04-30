@@ -1,2 +1,2 @@
-assemble: assemble.cpp
-	g++ -g -o assemble assemble.cpp
+qpu-assembler: assemble.cpp
+	g++ -g -o qpu-assembler assemble.cpp

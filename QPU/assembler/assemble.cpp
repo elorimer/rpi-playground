@@ -463,8 +463,6 @@ uint64_t assembleBRANCH(context& ctx, string word)
         tok = nextToken(ctx.stream, token_str, &ctx.stream);
     }
 
-    printf("  branch condition = %d\n", branchCondition);
-
     // this is the immediate value (label)
     if (tok != WORD) {
         cerr << "branch expecting word." << endl;
@@ -474,14 +472,13 @@ uint64_t assembleBRANCH(context& ctx, string word)
     // look it up in the labels map
     int target = 0xFFFFFFFF;
     if (ctx.labels.count(token_str) < 1) {
-        cout << "  undefined label. forward branch?  adding relocation" << endl;
         relocation r;
         r.label = token_str;
         r.pc = ctx.pc;
         ctx.relocations.push_back(r);
     } else
         target = ctx.labels[token_str];
-    int offset = target - (ctx.pc+4);
+    int offset = target - (ctx.pc+4*8);
 
     uint8_t raddr_a = 0;           // raddr_a is only 5-bits?
     uint8_t waddr_add = 39;         // link address appears at ALU outputs
@@ -498,6 +495,41 @@ uint64_t assembleBRANCH(context& ctx, string word)
     ins |= (uint64_t)waddr_add << 38;
     ins |= (uint64_t)waddr_mul << 32;
     ins |= (uint32_t)offset;
+
+    return ins;
+}
+
+uint64_t assembleSEMA(context& ctx, string word)
+{
+
+    uint64_t ins = (uint64_t)0x74 << 57;
+
+    string token_str;
+    token_t tok = nextToken(ctx.stream, token_str, &ctx.stream);
+    if (tok != WORD) {
+        cerr << "semaphore instruction expecting up/down." << endl;
+        return -1;
+    }
+
+    uint8_t sa = 0;             // down
+    if (token_str == "up")
+        sa = 1;
+
+    tok = nextToken(ctx.stream, token_str, &ctx.stream);
+    if (tok != COMMA)   return -1;
+    tok = nextToken(ctx.stream, token_str, &ctx.stream);
+    uint32_t imm = parseImmediate(token_str);
+    if (imm > 15) {
+        cerr << "semaphore out of range" << endl;
+        return -1;
+    }
+    // cond_add, cond_mul = NEVER, ws, sf = false
+    ins |= (uint64_t)39 << 38;          // waddr_add
+    ins |= (uint64_t)39 << 32;          // waddr_mul
+    ins |= sa << 4;
+    ins |= (uint8_t)imm;
+
+    cout << "Assembling SEMAPHORE instruction (" << imm << "), " << (int)sa << endl;
 
     return ins;
 }
@@ -573,6 +605,7 @@ int main(int argc, char **argv)
                 case ALU: ins = assembleALU(ctx, token_string); break;
                 case BRANCH: ins = assembleBRANCH(ctx, token_string); break;
                 case LDI: ins = assembleLDI(ctx, token_string); break;
+                case SEMA: ins = assembleSEMA(ctx, token_string); break;
             }
 
             if (ins == (uint64_t)-1) {
@@ -594,7 +627,7 @@ int main(int argc, char **argv)
             cerr << "undefined label: " << r.label << endl;
             return -1;
         }
-        int offset = ctx.labels[r.label] - (r.pc + 4);
+        int offset = ctx.labels[r.label] - (r.pc + 4*8);
         cout << "Processing relocation at " << r.pc << " : " << r.label << " : " << offset << endl;
         uint64_t ins = instructions[r.pc / 8];
         ins &= (uint64_t)0xFFFFFFFF << 32;                  // zero bottom 32-bits for new value
