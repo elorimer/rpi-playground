@@ -452,8 +452,14 @@ uint64_t assembleBRANCH(context& ctx, string word)
 {
     cout << "Assembing BRANCH instruction" << endl;
 
+    QPUreg dest;
     string token_str;
     token_t tok = nextToken(ctx.stream, token_str, &ctx.stream);
+
+    // relative or absolute branch?
+    uint8_t relative = 1;
+    if (word == "bra")
+        relative = 0;
 
     uint8_t branchCondition = 0xf;          // by default: always (unconditional branch)
     if (tok == DOT) {
@@ -463,9 +469,17 @@ uint64_t assembleBRANCH(context& ctx, string word)
         tok = nextToken(ctx.stream, token_str, &ctx.stream);
     }
 
-    // this is the immediate value (label)
+    // this is the destination register
     if (tok != WORD) {
-        cerr << "branch expecting word." << endl;
+        cerr << "branch expecting destination register." << endl;
+        return -1;
+    }
+    parseRegister(token_str, dest);
+    tok = nextToken(ctx.stream, token_str, &ctx.stream);
+    if (tok != COMMA) return false;
+    tok = nextToken(ctx.stream, token_str, &ctx.stream);
+    if (tok != WORD) {
+        cerr << "branch expecting label/target" << endl;
         return -1;
     }
 
@@ -481,15 +495,39 @@ uint64_t assembleBRANCH(context& ctx, string word)
     int offset = target - (ctx.pc+4*8);
 
     uint8_t raddr_a = 0;           // raddr_a is only 5-bits?
+    uint8_t use_reg = 0;
+    // if there's a third argument, it is a register offset
+    const char *discard;
+    tok = nextToken(ctx.stream, token_str, &discard);
+    if (tok == COMMA) {
+        QPUreg offsetReg;
+        // chew the comma we just read
+        ctx.stream = discard;
+        tok = nextToken(ctx.stream, token_str, &ctx.stream);
+        parseRegister(token_str, offsetReg);
+        if (offsetReg.file != QPUreg::A) {
+            cerr << "branch target offset register must be file A" << endl;
+            return -1;
+        }
+        if (offsetReg.num > 31) {
+            cerr << "branch target offset register must be < 32" << endl;
+            return -1;
+        }
+        raddr_a = offsetReg.num;
+        use_reg = 1;
+    }
+
     uint8_t waddr_add = 39;         // link address appears at ALU outputs
     uint8_t waddr_mul = 39;
+    if (dest.file == QPUreg::A) waddr_add = dest.num;
+    if (dest.file == QPUreg::B) waddr_mul = dest.num;
 
     // TODO: generate absolute branches too
 
     uint64_t ins = (uint64_t)0xF << 60;
     ins |= (uint64_t)branchCondition << 52;
-    ins |= (uint64_t)0x1 << 51;                       // branch relative = true
-    ins |= (uint64_t)0x0 << 50;                       // add register to immediate
+    ins |= (uint64_t)relative << 51;
+    ins |= (uint64_t)use_reg << 50;
     ins |= (uint64_t)raddr_a << 45;
     ins |= (uint64_t)0x0 << 44;                       // write-swap
     ins |= (uint64_t)waddr_add << 38;
@@ -619,6 +657,7 @@ int main(int argc, char **argv)
     }
 
     // Process relocations
+    ctx.labels["ZERO"] = 0x0;
     for (int i=0; i < ctx.relocations.size(); i++)
     {
         relocation& r = ctx.relocations[i];
@@ -628,9 +667,12 @@ int main(int argc, char **argv)
             return -1;
         }
         int offset = ctx.labels[r.label] - (r.pc + 4*8);
-        cout << "Processing relocation at " << r.pc << " : " << r.label << " : " << offset << endl;
+        if (r.label == "ZERO")
+            offset = 0x0;
+        cout << "Processing relocation at " << r.pc << " : " << r.label
+                                            << " : " << offset << endl;
         uint64_t ins = instructions[r.pc / 8];
-        ins &= (uint64_t)0xFFFFFFFF << 32;                  // zero bottom 32-bits for new value
+        ins &= (uint64_t)0xFFFFFFFF << 32;   // zero bottom 32-bits for new value
         ins |= (uint32_t)offset;
         instructions[r.pc / 8] = ins;
     }
