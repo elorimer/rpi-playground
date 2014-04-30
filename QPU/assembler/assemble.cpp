@@ -507,12 +507,12 @@ uint64_t assembleSEMA(context& ctx, string word)
     string token_str;
     token_t tok = nextToken(ctx.stream, token_str, &ctx.stream);
     if (tok != WORD) {
-        cerr << "semaphore instruction expecting up/down." << endl;
+        cerr << "semaphore instruction expecting down/up or acquire/release" << endl;
         return -1;
     }
 
-    uint8_t sa = 0;             // down
-    if (token_str == "up")
+    uint8_t sa = 0;             // up
+    if (token_str == "down" || token_str == "acquire")
         sa = 1;
 
     tok = nextToken(ctx.stream, token_str, &ctx.stream);
