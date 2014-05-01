@@ -285,7 +285,8 @@ uint64_t assembleALU(context& ctx, string word)
     QPUreg mulDest, mulR1, mulR2;
 
     uint8_t sig = 0x1;          // no-signal (TODO: plumb signals through)
-    aluHelper(ctx.stream, addDest, addR1, addR2, sig, &ctx.stream);
+    if (!aluHelper(ctx.stream, addDest, addR1, addR2, sig, &ctx.stream))
+        return -1;
 
     token_t tok = nextToken(ctx.stream, token_str, &ctx.stream);
     // this should be a semi-colon
@@ -313,7 +314,8 @@ uint64_t assembleALU(context& ctx, string word)
 
     if (!skipParseMul) {
         uint8_t junk;
-        aluHelper(ctx.stream, mulDest, mulR1, mulR2, junk, &ctx.stream);
+        if (!aluHelper(ctx.stream, mulDest, mulR1, mulR2, junk, &ctx.stream))
+            return -1;
     }
 
     uint64_t ins = 0x0;
