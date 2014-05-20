@@ -180,6 +180,9 @@ token_t nextToken(const char *stream, string& out, const char **ptr)
     while (*stream == ' ' || *stream == '\t')
         stream++;
 
+    if (*stream == '\0')
+        return END;
+
     if (isdigit(*stream))
     {
         // read until we don't find a hex digit, x (for hex) or .
@@ -194,7 +197,6 @@ token_t nextToken(const char *stream, string& out, const char **ptr)
 
         return WORD;
     }
-
 
     if (*stream == '.') { *ptr = stream+1; return DOT; }
     if (*stream == ',') { *ptr = stream+1; return COMMA; }
@@ -214,6 +216,7 @@ token_t nextToken(const char *stream, string& out, const char **ptr)
     buffer[i++] = '\0';
     out = buffer;
     *ptr = stream;
+
     return WORD;
 }
 
@@ -524,8 +527,6 @@ uint64_t assembleBRANCH(context& ctx, string word)
     if (dest.file == QPUreg::A) waddr_add = dest.num;
     if (dest.file == QPUreg::B) waddr_mul = dest.num;
 
-    // TODO: generate absolute branches too
-
     uint64_t ins = (uint64_t)0xF << 60;
     ins |= (uint64_t)branchCondition << 52;
     ins |= (uint64_t)relative << 51;
@@ -608,8 +609,10 @@ int main(int argc, char **argv)
 
     vector<uint64_t> instructions;
 
+    int lineNo = 0;
     while (cin.getline(line, 128))
     {
+        lineNo++;
         const char *p = line;
         ctx.stream = p;
         token_t tok = nextToken(ctx.stream, token_string, &ctx.stream);
@@ -636,7 +639,8 @@ int main(int argc, char **argv)
             if (token_string == "sema") opType = SEMA;
 
             if (opType == INVALID) {
-                cout << "Unable to assemble line; invalid opcode: " << line << endl;
+                cerr << "Unable to assemble line " << lineNo << " : " << line << endl;
+                cerr << " ... invalid opcode" << endl;
                 return -1;
             }
 
@@ -649,7 +653,7 @@ int main(int argc, char **argv)
             }
 
             if (ins == (uint64_t)-1) {
-                cerr << "Error on line: " << line << endl;
+                cerr << "Error on line " << lineNo << " : " << line << endl;
                 return -1;
             }
 
