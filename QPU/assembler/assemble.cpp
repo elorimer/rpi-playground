@@ -4,6 +4,7 @@
 #include <inttypes.h>
 #include <map>
 #include <vector>
+#include <unistd.h> // for getopt()
 
 using namespace std;
 
