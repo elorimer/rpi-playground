@@ -5,9 +5,8 @@
 #include <sys/time.h>
 
 #include "mailbox.h"
+#include "qpu.h"
 
-#define GPU_MEM_FLG     0xC
-#define GPU_MEM_MAP     0x0
 #define NUM_QPUS        1
 #define MAX_CODE_SIZE   8192
 
@@ -52,6 +51,13 @@ int main(int argc, char **argv)
     printf("Loaded %d bytes of code from %s ...\n", code_words * sizeof(unsigned), argv[1]);
 
     int mb = mbox_open();
+
+    struct GPU_FFT_HOST host;
+    if (gpu_fft_get_host_info(&host)){
+        fprintf(stderr, "QPU fetch of host information (Rpi version, etc.) failed.\n");
+        return -5;
+    }
+
     if (qpu_enable(mb, 1)) {
         fprintf(stderr, "QPU enable failed.\n");
         return -1;
@@ -62,13 +68,21 @@ int main(int argc, char **argv)
     printf("Uniform value = %d\n", uniform_val);
 
     unsigned size = 1024 * 1024;
-    unsigned handle = mem_alloc(mb, size, 4096, GPU_MEM_FLG);
+    unsigned handle = mem_alloc(mb, size, 4096, host.mem_flg);
     if (!handle) {
         fprintf(stderr, "Unable to allocate %d bytes of GPU memory", size);
         return -2;
     }
+
+    volatile unsigned *peri = (volatile unsigned *) mapmem(host.peri_addr, host.peri_size);
+    if (!peri) {
+        mem_free(mb, handle);
+        qpu_enable(mb, 0);
+        return -4;
+    }
+
     unsigned ptr = mem_lock(mb, handle);
-    void *arm_ptr = mapmem(ptr + GPU_MEM_MAP, size);
+    void *arm_ptr = mapmem(BUS_TO_PHYS(ptr + host.mem_map), size);
     // assert arm_ptr ...
 
     struct memory_map *arm_map = (struct memory_map *)arm_ptr;
@@ -85,7 +99,7 @@ int main(int argc, char **argv)
         arm_map->msg[i][1] = vc_code;
     }
 
-    unsigned ret = execute_qpu(mb, NUM_QPUS, vc_msg, 1, 10000);
+    unsigned ret = execute_qpu(mb, NUM_QPUS, vc_msg, GPU_FFT_NO_FLUSH, GPU_FFT_TIMEOUT);
 
     // check the results!
     for (int i=0; i < NUM_QPUS; i++) {
@@ -96,6 +110,7 @@ int main(int argc, char **argv)
 
     printf("Cleaning up.\n");
     unmapmem(arm_ptr, size);
+    unmapmem((void*)host.peri_addr, host.peri_size);
     mem_unlock(mb, handle);
     mem_free(mb, handle);
     qpu_enable(mb, 0);

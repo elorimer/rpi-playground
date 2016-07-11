@@ -8,24 +8,22 @@
 #include <stddef.h>
 #include <unistd.h>
 #include "mailbox.h"
+#include "qpu.h"
 #include "qpufuncs.h"
 
-//#define GPU_MEM_FLG 0x4 // cached=0xC; direct=0x4
-//#define GPU_MEM_MAP 0x20000000 // cached=0x0; direct=0x20000000
-
-#define GPU_MEM_FLG     0xC
 #define GPU_MEM_MAP     0x0
 #define REGISTER_BASE   0x20C00000
 
-#define V3D_SRQPC       0x10c
-#define V3D_SRQUA       0x10d
-#define V3D_SRQUL       0x10e
-#define V3D_SRQCS       0x10f
+// Definitions differs from qpu.h
+//#define V3D_SRQPC       0x10c
+//#define V3D_SRQUA       0x10d
+//#define V3D_SRQUL       0x10e
+//#define V3D_SRQCS       0x10f
 
 #define V3D_VPMBASE     0x7e
 
-#define V3D_L2CACTL     0x8
-#define V3D_SLCACTL     0x9
+//#define V3D_L2CACTL     0x8
+//#define V3D_SLCACTL     0x9
 
 //#define DIRECT_EXEC
 #define NUNIFORMS       4
@@ -70,11 +68,18 @@ static struct
     volatile uint32_t *registers;
 } sha256_qpu_context;
 
+struct GPU_FFT_HOST host;
 
 int SHA256SetupQPU(uint32_t* K, uint32_t *data, uint32_t *H, int stride,
                    unsigned *shader_code, unsigned code_len)
 {
     sha256_qpu_context.mb = mbox_open();
+
+    if (gpu_fft_get_host_info(&host)){
+        fprintf(stderr, "QPU fetch of host information (Rpi version, etc.) failed.\n");
+        return -5;
+    }
+
     if (qpu_enable(sha256_qpu_context.mb, 1)) {
         fprintf(stderr, "Unable to enable QPU\n");
         return -1;
@@ -104,14 +109,22 @@ int SHA256SetupQPU(uint32_t* K, uint32_t *data, uint32_t *H, int stride,
     sha256_qpu_context.size = 1024 * 1024;
     sha256_qpu_context.handle = mem_alloc(sha256_qpu_context.mb,
                                           sha256_qpu_context.size, 4096,
-                                          GPU_MEM_FLG);
+                                          host.mem_flg);
     if (!sha256_qpu_context.handle) {
         fprintf(stderr, "Unable to allocate %d bytes of GPU memory",
                         sha256_qpu_context.size);
         return -2;
     }
+
+    volatile unsigned *peri = (volatile unsigned *) mapmem(host.peri_addr, host.peri_size);
+    if (!peri) {
+        mem_free(sha256_qpu_context.mb, sha256_qpu_context.handle);
+        qpu_enable(sha256_qpu_context.mb, 0);
+        return -4;
+    }
+
     unsigned ptr = mem_lock(sha256_qpu_context.mb, sha256_qpu_context.handle);
-    sha256_qpu_context.arm_ptr = mapmem(ptr + GPU_MEM_MAP, sha256_qpu_context.size);
+    sha256_qpu_context.arm_ptr = mapmem(BUS_TO_PHYS(ptr + host.mem_map), sha256_qpu_context.size);
     sha256_qpu_context.ptr = ptr;
     printf("Locked memory at 0x%x = 0x%x\n", ptr, sha256_qpu_context.arm_ptr);
 
@@ -149,7 +162,7 @@ void SHA256ExecuteQPU(uint32_t* H, int nlaps)
 
 #ifndef DIRECT_EXEC
     unsigned ret = execute_qpu(sha256_qpu_context.mb, NUM_QPUS,
-                               sha256_qpu_context.vc_msg, 1, 10000);
+                               sha256_qpu_context.vc_msg, GPU_FFT_NO_FLUSH, GPU_FFT_TIMEOUT);
     if (ret != 0)
         fprintf(stderr, "Failed execute_qpu!\n");
 #else
@@ -180,6 +193,7 @@ void SHA256ExecuteQPU(uint32_t* H, int nlaps)
 void SHA256CleanupQPU(int handle)
 {
     unmapmem(sha256_qpu_context.arm_ptr, sha256_qpu_context.size);
+    unmapmem((void*)host.peri_addr, host.peri_size);
     mem_unlock(sha256_qpu_context.mb, sha256_qpu_context.handle);
     mem_free(sha256_qpu_context.mb, sha256_qpu_context.handle);
     qpu_enable(sha256_qpu_context.mb, 0);
